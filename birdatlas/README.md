@@ -20,6 +20,24 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Bird Atlas setup
+
+This app uses the eBird API to rank birds by how frequently they appear in recent observations for a state.
+
+1. Create your environment file:
+
+   - Copy `.env.example` to `.env.local`
+   - Set `EBIRD_API_KEY` in `.env.local`
+   - Do not commit `.env.local` (it is ignored by `.gitignore`)
+
+2. Start the dev server:
+
+```bash
+npm run dev
+```
+
+Note: The eBird `/v2/data/obs/{regionCode}/recent` endpoint supports a limited lookback (`back=30`), so the ranking window is currently “last 30 days (approx.)”.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
