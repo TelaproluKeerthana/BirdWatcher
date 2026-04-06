@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { makeCacheKey, readCacheJson, writeCacheJson } from "@/lib/cache";
-
-type BirdRank = {
-  speciesCode: string;
-  commonName: string;
-  scientificName: string;
-  score: number;
-};
+import type { BirdRank, StateBirdsResponse } from "@/types/state-birds";
 
 type EbirdRecentObservation = {
   speciesCode?: string;
@@ -28,11 +22,12 @@ function toNumber(value: number | string | null | undefined): number | null {
   return null;
 }
 
-function isNativeObservation(obs: EbirdRecentObservation): boolean {
-  // Best-effort "native" approximation:
-  // - If eBird provides `exoticCategory` and it is non-empty, treat as non-native.
-  // - If it provides `exoticCode` (naturalized/provisional/escapee) treat non-empty as non-native.
-  // - If neither exists, fall back to "allow".
+/**
+ * Non-exotic rows for this checklist observation (eBird operational sense).
+ * eBird uses empty/NA exoticCategory for native-range reporting; N/P/X flags mark introduced taxa.
+ * This is not the same as “species native to the state’s ecosystems” (requires external range data).
+ */
+function isNonExoticObservation(obs: EbirdRecentObservation): boolean {
   const exoticCategory = typeof obs.exoticCategory === "string" ? obs.exoticCategory.trim() : "";
   if (exoticCategory) return false;
 
@@ -41,6 +36,17 @@ function isNativeObservation(obs: EbirdRecentObservation): boolean {
 
   return true;
 }
+
+/** v1 metric metadata (same for all cached responses). */
+const METRIC_V1: StateBirdsResponse["metric"] = {
+  id: "recent_non_exotic_abundance_v1",
+  scoreDescription:
+    "Per species: sum of reported counts (howMany) across non-exotic rows, or 1 per row when no count.",
+  nonExoticFilterDescription:
+    "Includes only rows where eBird does not set exoticCategory or exoticCode on the observation.",
+  nativityNote:
+    "True biogeographic nativity (breeding residents vs migrants, native vs introduced range) is not in the eBird JSON API; this list ranks recent non-exotic sightings only.",
+};
 
 export async function GET(
   _request: NextRequest,
@@ -57,18 +63,14 @@ export async function GET(
     return NextResponse.json({ error: "Missing EBIRD_API_KEY on the server." }, { status: 500 });
   }
 
-  // eBird v2 "recent" is typically limited to a small lookback window. We start with `back=30`.
-  // Later we can improve the time window via batching if eBird exposes a workable date-range mechanism.
+  // eBird v2 `back` is limited (1–30 days). The `/recent` endpoint does not accept taxonomic
+  // `categories` (see rebird’s `ebirdregion` vs `ebirdhistorical`); the historic observations
+  // call supports `categories` for a single calendar date if we add day-based sampling later.
   const backDays = 30;
   const maxResults = 10000;
 
   const cacheKey = makeCacheKey({ stateCode, backDays });
-  const cached = await readCacheJson<{
-    stateCode: string;
-    rankingWindow: { backDays: number };
-    top4: BirdRank[];
-    top20: BirdRank[];
-  }>(cacheKey);
+  const cached = await readCacheJson<StateBirdsResponse>(cacheKey);
 
   if (cached) return NextResponse.json(cached);
 
@@ -106,12 +108,11 @@ export async function GET(
     const speciesCode = obs.speciesCode;
     if (!speciesCode) continue;
 
-    if (!isNativeObservation(obs)) continue;
+    if (!isNonExoticObservation(obs)) continue;
 
     const commonName = obs.comName?.trim() || speciesCode;
     const scientificName = obs.sciName?.trim() || speciesCode;
 
-    // Prefer numeric "howMany" when available, otherwise count rows.
     const howMany = toNumber(obs.howMany);
     const increment = howMany !== null ? howMany : 1;
 
@@ -125,7 +126,6 @@ export async function GET(
       });
     } else {
       existing.score += increment;
-      // Keep first names; they should be stable per speciesCode.
     }
   }
 
@@ -141,16 +141,18 @@ export async function GET(
   const top4 = ranked.slice(0, 4);
   const top20 = ranked.slice(0, 20);
 
-  const payload = {
+  const payload: StateBirdsResponse = {
     stateCode,
-    rankingWindow: { backDays },
+    rankingWindow: {
+      backDays,
+      label: `Last ${backDays} days (eBird recent observations)`,
+    },
+    metric: METRIC_V1,
     top4,
     top20,
   };
 
-  // Cache best-effort. If writing fails, still return fresh computed results.
   writeCacheJson(cacheKey, payload).catch(() => {});
 
   return NextResponse.json(payload);
 }
-

@@ -4,7 +4,8 @@ import path from "node:path";
 // Keep cache small and predictable. Adjust TTL/version if you want refresh behavior.
 const CACHE_DIR = path.join(process.cwd(), ".birdatlas-cache");
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const CACHE_VERSION = 1;
+// Bump when API payload shape or ranking semantics change (invalidates disk cache).
+const CACHE_VERSION = 2;
 
 export function makeCacheKey(parts: {
   stateCode: string;

@@ -1,30 +1,19 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-type BirdRank = {
-  speciesCode: string;
-  commonName: string;
-  scientificName: string;
-  score: number;
-};
-
-type StateBirdsResponse = {
-  stateCode: string;
-  rankingWindow: { backDays: number };
-  top4: BirdRank[];
-  top20: BirdRank[];
-};
+import type { StateBirdsResponse } from "@/types/state-birds";
 
 export type BirdPanelProps = {
   selectedStateCode: string | null;
+  onSpeciesSelected?: (speciesCode: string, commonName: string) => void;
+  activeSpeciesCode?: string | null;
 };
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function BirdPanel({ selectedStateCode }: BirdPanelProps) {
+export default function BirdPanel({ selectedStateCode, onSpeciesSelected, activeSpeciesCode }: BirdPanelProps) {
   const [data, setData] = useState<StateBirdsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +126,7 @@ export default function BirdPanel({ selectedStateCode }: BirdPanelProps) {
       <aside className="w-full md:w-[360px] p-4 bg-white dark:bg-black rounded-lg border border-zinc-200 dark:border-zinc-800">
         <div className="font-semibold mb-2">Bird Atlas</div>
         <div className="text-sm text-zinc-600 dark:text-zinc-300">
-          Click a state on the map to see the top birds.
+          Click a state for ranked recent non-exotic sightings (eBird).
         </div>
       </aside>
     );
@@ -147,11 +136,19 @@ export default function BirdPanel({ selectedStateCode }: BirdPanelProps) {
     <aside className="w-full md:w-[420px] p-4 bg-white dark:bg-black rounded-lg border border-zinc-200 dark:border-zinc-800">
       <div className="flex items-start justify-between gap-4 mb-2">
         <div>
-          <div className="font-semibold">Top birds in {selectedStateCode}</div>
+          <div className="font-semibold">Top non-exotic sightings · {selectedStateCode}</div>
           {data ? (
-            <div className="text-xs text-zinc-600 dark:text-zinc-300">
-              Ranking window: last {data.rankingWindow.backDays} days (approx.)
-            </div>
+            <>
+              <div className="text-xs text-zinc-600 dark:text-zinc-300 mt-1">
+                {data.rankingWindow.label}
+              </div>
+              <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-1">{data.metric.scoreDescription}</p>
+              <details className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+                <summary className="cursor-pointer select-none">About non-exotic vs native range</summary>
+                <p className="mt-2 pl-0">{data.metric.nonExoticFilterDescription}</p>
+                <p className="mt-1">{data.metric.nativityNote}</p>
+              </details>
+            </>
           ) : null}
         </div>
         {loading ? <div className="text-xs text-zinc-600 dark:text-zinc-300">Loading...</div> : null}
@@ -166,32 +163,54 @@ export default function BirdPanel({ selectedStateCode }: BirdPanelProps) {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-2">
-            {(expanded ? data.top20 : data.top4).map((b) => (
-              <div
-                key={b.speciesCode}
-                className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-md overflow-hidden bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center shrink-0">
-                    {mounted && thumbs[b.speciesCode] ? (
-                      // Wikimedia thumbnails are regular image URLs; no special Next config required.
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={thumbs[b.speciesCode] as string}
-                        alt={b.commonName}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-5 h-5 rounded bg-zinc-300 dark:bg-zinc-700" />
+            {(expanded ? data.top20 : data.top4).map((b) => {
+              const isActive = activeSpeciesCode === b.speciesCode;
+              return (
+                <div
+                  key={b.speciesCode}
+                  className={
+                    "p-3 rounded-md border " +
+                    (isActive
+                      ? "bg-emerald-50 dark:bg-emerald-950 border-emerald-300 dark:border-emerald-700"
+                      : "bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800")
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-md overflow-hidden bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center shrink-0">
+                      {mounted && thumbs[b.speciesCode] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={thumbs[b.speciesCode] as string}
+                          alt={b.commonName}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-5 h-5 rounded bg-zinc-300 dark:bg-zinc-700" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium truncate">{b.commonName}</div>
+                      <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">{b.scientificName}</div>
+                    </div>
+                    {onSpeciesSelected && (
+                      <button
+                        type="button"
+                        onClick={() => onSpeciesSelected(b.speciesCode, b.commonName)}
+                        className={
+                          "shrink-0 px-2 py-1 rounded text-xs font-medium transition-colors " +
+                          (isActive
+                            ? "bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950"
+                            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-800")
+                        }
+                        title="See which states recently reported this species on the map"
+                      >
+                        {isActive ? "Viewing" : "Where?"}
+                      </button>
                     )}
                   </div>
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{b.commonName}</div>
-                    <div className="text-xs text-zinc-600 dark:text-zinc-300 truncate">{b.scientificName}</div>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-3 flex items-center justify-between gap-3">
@@ -211,4 +230,3 @@ export default function BirdPanel({ selectedStateCode }: BirdPanelProps) {
     </aside>
   );
 }
-

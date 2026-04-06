@@ -9,6 +9,8 @@ import usStatesTopo from "us-atlas/states-10m.json";
 export type UsMapProps = {
   selectedStateCode?: string | null;
   onStateSelected: (stateCode: string) => void;
+  /** stateCode -> totalCount; when provided the map shows a presence choropleth. */
+  speciesPresence?: Record<string, number> | null;
 };
 
 // US state name -> 2-letter abbreviation (matches eBird region codes: "US-XX").
@@ -104,7 +106,25 @@ const hoverSelectedStyle: L.PathOptions = {
   fillOpacity: 0.98,
 };
 
-export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps) {
+/** Dimmed style for states with no reports when presence choropleth is active. */
+const noPresenceStyle: L.PathOptions = {
+  weight: 1,
+  color: "#d1d5db",
+  fillColor: "#f9fafb",
+  fillOpacity: 0.5,
+};
+
+function presenceStyle(count: number, maxCount: number): L.PathOptions {
+  const t = Math.min(count / Math.max(maxCount, 1), 1);
+  return {
+    weight: 1,
+    color: "#166534",
+    fillColor: "#16a34a",
+    fillOpacity: 0.25 + 0.65 * t,
+  };
+}
+
+export default function UsMap({ selectedStateCode, onStateSelected, speciesPresence }: UsMapProps) {
   const [mounted, setMounted] = useState(false);
 
   React.useEffect(() => {
@@ -112,12 +132,35 @@ export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps
   }, []);
 
   const usStatesGeoJson = useMemo(() => {
-    // Convert TopoJSON to GeoJSON. `states-10m.json` stores state polygons under `objects.states`.
     const topo = usStatesTopo as unknown as { objects: { states: unknown } };
     return topoFeature(topo as unknown, topo.objects.states) as unknown;
   }, []);
 
+  const maxPresenceCount = useMemo(() => {
+    if (!speciesPresence) return 0;
+    const vals = Object.values(speciesPresence);
+    return vals.length > 0 ? Math.max(...vals) : 0;
+  }, [speciesPresence]);
+
+  // Force GeoJSON re-mount when visual state changes so styles + handlers re-bind.
+  const geoKey = useMemo(() => {
+    const sel = selectedStateCode ?? "none";
+    const pres = speciesPresence ? Object.keys(speciesPresence).sort().join(",") : "off";
+    return `${sel}_${pres}`;
+  }, [selectedStateCode, speciesPresence]);
+
   if (!mounted) return null;
+
+  const getBaseStyle = (stateCode: string | null): L.PathOptions => {
+    if (stateCode && stateCode === selectedStateCode) return selectedStyle;
+    if (speciesPresence) {
+      if (stateCode && stateCode in speciesPresence) {
+        return presenceStyle(speciesPresence[stateCode], maxPresenceCount);
+      }
+      return noPresenceStyle;
+    }
+    return defaultStyle;
+  };
 
   return (
     <div className="w-full h-[520px] rounded-lg overflow-hidden">
@@ -130,11 +173,11 @@ export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
 
         <GeoJSON
+          key={geoKey}
           data={usStatesGeoJson as unknown as GeoJSON.GeoJsonObject}
           style={(feature: unknown) => {
             const props = (feature as { properties?: UsAtlasProperties }).properties;
-            const stateCode = toStateCode(props?.name);
-            return stateCode && stateCode === selectedStateCode ? selectedStyle : defaultStyle;
+            return getBaseStyle(toStateCode(props?.name));
           }}
           onEachFeature={(feature: unknown, layer: L.Layer) => {
             const props = (feature as { properties?: UsAtlasProperties }).properties;
@@ -142,6 +185,14 @@ export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps
             if (!stateCode) return;
 
             const pathLayer = layer as L.Path;
+
+            if (speciesPresence && stateCode in speciesPresence) {
+              const count = speciesPresence[stateCode];
+              pathLayer.bindTooltip(`${props?.name}: ${count.toLocaleString()} reported`, {
+                sticky: true,
+              });
+            }
+
             layer.on({
               click: () => onStateSelected(stateCode),
               mouseover: () => {
@@ -151,8 +202,7 @@ export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps
                 if (el instanceof HTMLElement) el.style.cursor = "pointer";
               },
               mouseout: () => {
-                const style = stateCode === selectedStateCode ? selectedStyle : defaultStyle;
-                pathLayer.setStyle(style);
+                pathLayer.setStyle(getBaseStyle(stateCode));
               },
             });
           }}
@@ -161,4 +211,3 @@ export default function UsMap({ selectedStateCode, onStateSelected }: UsMapProps
     </div>
   );
 }
-
