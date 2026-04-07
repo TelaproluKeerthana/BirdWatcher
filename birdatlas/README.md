@@ -1,75 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bird Atlas
 
-## Getting Started
+An interactive US map that ranks birds by recent non-exotic sightings per state, powered by the [eBird API 2.0](https://ebird.org/home). Click any state to see its top-reported species, then click **"Where?"** on a bird to see which other states recently reported it.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+**State bird rankings** -- Click a state on the Leaflet map. The side panel shows the top 4 (expandable to 20) species ranked by total reported count over the last 30 days, with Wikipedia thumbnail images fetched on the fly.
+
+**Species presence choropleth** -- Click **"Where?"** next to any bird. The map recolors as a choropleth: greener states had more recent reports of that species, dimmed states had none. Hover a state for the exact count.
+
+**Non-exotic filtering** -- Observations flagged by eBird as introduced, naturalized, provisional, or escapee (`exoticCategory` / `exoticCode`) are excluded. This is an operational "non-exotic" filter, not the same as strict biogeographic nativity (see the in-app details panel for the distinction).
+
+**Disk cache** -- All eBird and Wikipedia responses are cached to `.birdatlas-cache/` for 24 hours to minimize repeat API calls.
+
+## Tech stack
+
+| Layer | Technology |
+|-------|------------|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript 5, React 19 |
+| Map | Leaflet + react-leaflet, us-atlas TopoJSON |
+| Styling | Tailwind CSS 4 |
+| Data | eBird API 2.0, Wikipedia REST API |
+
+## Project structure
+
+```
+birdatlas/
+  src/
+    app/
+      page.tsx                              Main page (map + panel layout)
+      api/
+        state-birds/[stateCode]/route.ts    Ranked birds for one US state
+        species-presence/[speciesCode]/route.ts  Cross-state presence for one species
+        wiki-thumbnail/route.ts             Wikipedia thumbnail proxy
+    components/
+      UsMap.tsx                             Leaflet map with choropleth support
+      BirdPanel.tsx                         Scrollable bird list with "Where?" buttons
+    lib/
+      cache.ts                              Disk-based JSON cache (24h TTL)
+    types/
+      state-birds.ts                        StateBirdsResponse, BirdRank
+      species-presence.ts                   SpeciesPresenceResponse
+  .birdatlas-cache/                         Cached API responses (gitignored)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Getting started
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Get a free eBird API key from [ebird.org/api/keygen](https://ebird.org/api/keygen).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Bird Atlas setup
-
-This app uses the [eBird API 2.0](https://ebird.org/home) to rank species by **relative abundance in recent observations** for each US state (`US-XX` subnational codes), after filtering out rows eBird flags with **exotic** metadata (`exoticCategory` / `exoticCode`). That is an operational “non-exotic” signal, **not** the same as mapping true biogeographic nativity (native breeding range, etc.), which would require merging external range data.
-
-**Metric (v1):** `recent_non_exotic_abundance_v1` — sum of `howMany` per species over the lookback window (or `1` per row when no count), using `GET /v2/data/obs/{region}/recent` with `back=30` and `maxResults` up to 10,000. The JSON response includes `metric` and `rankingWindow` fields documenting this.
-
-**API note:** Regional **checklist frequency** (percentage of checklists reporting a species) is not exposed through this lightweight JSON API the same way; obtaining that typically means working with the **eBird Basic Dataset** or other bulk products under eBird’s data terms, not `product/spplist` alone (which is presence-only).
-
-Use the API under the [eBird API Terms of Use](https://birds.cornell.edu/home/ebird-api-terms-of-use).
-
-1. Create your environment file:
-
-   - Copy `.env.example` to `.env.local`
-   - Set `EBIRD_API_KEY` in `.env.local`
-   - Do not commit `.env.local` (it is ignored by `.gitignore`)
-
-2. Start the dev server:
+2. Create the environment file:
 
 ```bash
+cp .env.example .env.local
+```
+
+Set `EBIRD_API_KEY` in `.env.local`. Do not commit this file.
+
+3. Install and run:
+
+```bash
+npm install
 npm run dev
 ```
 
-The `/v2/data/obs/{regionCode}/recent` endpoint limits `back` to at most 30 days; the app uses `back=30`.
+Open [http://localhost:3000](http://localhost:3000).
 
-### Species presence across states
+## How it works
 
-Clicking **"Where?"** on a bird in the panel queries `GET /v2/data/obs/{stateCode}/recent/{speciesCode}` for each US state (batched 10 at a time, aggregate cached 24 hours) and colors the map as a choropleth — greener states had more recent reports. Hover a state for the count.
+### State bird ranking (`/api/state-birds/[stateCode]`)
 
-This shows **where eBird users recently reported a species**, not migration paths. The eBird JSON API does not expose inter-region movement vectors, flyway data, or seasonal range shifts.
+Calls `GET /v2/data/obs/{US-XX}/recent?back=30&maxResults=10000`. For each observation, rows with non-empty `exoticCategory` or `exoticCode` are dropped. Remaining rows are grouped by `speciesCode` and scored by summing `howMany` (or 1 when no count is provided). The response includes a `metric` object describing the scoring and filtering logic.
 
-### Migration / seasonal range data (future)
+### Species presence (`/api/species-presence/[speciesCode]`)
 
-True **seasonal migration or range-shift** maps require a different data tier:
+Queries all 51 US states individually using `GET /v2/data/obs/{stateCode}/recent/{speciesCode}?back=30&maxResults=200`, batched 10 at a time. The state code is known from the request path, so the route does not depend on any state-level fields in the eBird response body. Results are aggregated and cached as a single payload.
 
-- **[eBird Status & Trends](https://science.ebird.org/en/status-and-trends)** products provide seasonal relative abundance surfaces and range polygons suitable for animation. Access is separate from the basic API key and typically involves raster/polygon datasets consumed via R (`ebirdst`) or GIS workflows.
-- Alternatively, **external flyway / range layers** (USFWS, BirdLife International, etc.) can be overlaid.
+### Caching
 
-Neither of these is integrated yet; this would be a separate feature.
+Both API routes use a shared disk cache (`src/lib/cache.ts`) with a 24-hour TTL. Cache keys include the query parameters and a version number. Bumping the version invalidates old entries when the payload shape changes.
 
-## Learn More
+## What changed recently
 
-To learn more about Next.js, take a look at the following resources:
+- **Non-exotic metric definition** -- The API response now includes structured `metric` and `rankingWindow` fields documenting how scores are computed and what "non-exotic" means, with in-app copy clarifying the distinction from true native range.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Species presence across states** -- New "Where?" button per bird. Queries eBird for that species across all US states (per-state batched calls) and renders a green choropleth on the map with hover tooltips showing counts.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Scrollable bird list** -- The panel height matches the map. When expanded to 20 birds, the list scrolls within a fixed container with pinned header and footer.
 
-## Deploy on Vercel
+- **Cache version bump** -- Cache version incremented to v2 (state-birds) / v3 (species-presence) to invalidate stale entries from earlier payload formats.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## What could change next
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Checklist frequency ranking** -- The current metric (summed `howMany`) over-weights large flocks. A better ranking would be *percentage of checklists that include a species*, but that data is not available through the lightweight eBird JSON API. It would require the [eBird Basic Dataset](https://ebird.org/data/download) or bulk exports.
+
+- **Seasonal migration / range maps** -- The eBird observation API does not expose migration paths or seasonal range shifts. True seasonal maps would need [eBird Status & Trends](https://science.ebird.org/en/status-and-trends) products (raster/polygon data, separate access) or external flyway layers from USFWS or BirdLife International.
+
+- **Taxonomic category filtering** -- The `/recent` endpoint does not accept a `categories` parameter. The historic observations endpoint (`/data/obs/{region}/historic/{Y}/{M}/{D}`) does support `categories=species` for filtering to species-level taxa only, which could be used with day-based sampling.
+
+- **Longer time windows** -- eBird limits `back` to 30 days on the recent endpoint. Covering a full year would require batching historic single-day calls across dates, which is expensive and rate-limit-sensitive.
+
+- **State-level search** -- Let users search for a species by name across the ranked list instead of scrolling.
+
+## License and terms
+
+Use of eBird data is subject to the [eBird API Terms of Use](https://birds.cornell.edu/home/ebird-api-terms-of-use). Wikipedia thumbnails are served under Wikimedia's terms.
