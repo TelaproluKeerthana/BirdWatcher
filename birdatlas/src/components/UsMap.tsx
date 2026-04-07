@@ -163,7 +163,7 @@ export default function UsMap({ selectedStateCode, onStateSelected, speciesPrese
   };
 
   return (
-    <div className="w-full h-[520px] rounded-lg overflow-hidden">
+    <div className="w-full h-full rounded-lg overflow-hidden">
       <MapContainer
         center={[37.8, -96]}
         zoom={4.2}
